@@ -113,6 +113,17 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 .frow .d span{font-size:12px;color:var(--muted)}
 .badge{min-width:18px;height:18px;border-radius:9px;background:var(--aed);color:#fff;font:700 11px var(--f-mono);display:inline-grid;place-items:center;padding:0 5px;margin-left:4px}
 .mask{-webkit-text-security:disc}
+.guide{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.gtoggle{width:100%;display:flex;justify-content:space-between;align-items:center;border:0;background:var(--paper);color:var(--ink);padding:12px;font:700 14.5px var(--f-body);cursor:pointer}
+.gtoggle span{font:500 12px var(--f-body);color:var(--muted)}
+.gbody{padding:4px 12px 12px;display:flex;flex-direction:column;gap:10px}
+.gbefore{margin:6px 0 0;font-size:13px;line-height:1.55;background:color-mix(in srgb,var(--aed) 9%,transparent);border-radius:8px;padding:9px 10px}
+.gsteps{margin:0;padding:0;list-style:none;counter-reset:g;display:flex;flex-direction:column;gap:8px}
+.gsteps li{counter-increment:g;display:grid;grid-template-columns:26px 1fr;gap:2px 8px;font-size:13.5px;line-height:1.5}
+.gsteps li::before{content:counter(g);grid-row:span 2;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font:700 12px var(--f-mono)}
+.gsteps b{font-size:14px}
+.gsteps span{color:var(--muted)}
+.gacts{display:flex;gap:6px;flex-wrap:wrap}.gacts>*{flex:1;min-width:0}
 .demo{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5}
 </style>
 </head>
@@ -257,8 +268,16 @@ const DB={
 let me=null,follow=true,filters={aed:true,ext:true,elev:true,water:true},selB="",selF="all",picking=null,route=null,adminTab="pending";
 
 /* ---------- 지도 ---------- */
-const map=L.map("map",{zoomControl:false}).setView([36.3695,127.3445],16);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+// 충남대 대덕캠퍼스 범위 (이 밖으로는 지도가 움직이지 않음 · 필요하면 숫자만 조정)
+const CAMPUS=L.latLngBounds([36.3595,127.3355],[36.3795,127.3565]);
+const map=L.map("map",{zoomControl:false,zoomSnap:0.5,maxBounds:CAMPUS.pad(0.05),maxBoundsViscosity:1.0}).setView([36.3695,127.3445],16);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap",bounds:CAMPUS.pad(0.15)}).addTo(map);
+// 캠퍼스 바깥은 흐리게
+L.polygon([[[90,-180],[90,180],[-90,180],[-90,-180]],[CAMPUS.getNorthWest(),CAMPUS.getNorthEast(),CAMPUS.getSouthEast(),CAMPUS.getSouthWest()]],
+  {stroke:false,fillColor:"#1d2621",fillOpacity:.35,interactive:false}).addTo(map);
+L.rectangle(CAMPUS,{color:"#00543c",weight:2,fill:false,dashArray:"6 6",interactive:false}).addTo(map);
+function fitCampusZoom(){map.setMinZoom(Math.max(14,map.getBoundsZoom(CAMPUS,false)-0.5))}
+fitCampusZoom();map.on("resize",fitCampusZoom);
 const layer=L.layerGroup().addTo(map);
 let meMarker=null,meCircle=null,pickMarker=null,routeLayer=null,bLabel=null;
 map.on("dragstart",()=>{follow=false;$("locate").classList.remove("on")});
@@ -311,19 +330,41 @@ function openBuilding(name,silent){
 }
 
 /* ---------- 실시간 위치 ---------- */
+/* GPS 튐 줄이기
+   1) 오차가 너무 큰 값(60m 초과)은 이미 좋은 위치가 있으면 버림
+   2) 사람이 걸을 수 없는 속도(초속 7m 이상)로 순간이동한 값은 버림 (3번 연속이면 진짜 이동으로 인정)
+   3) 칼만 필터로 정확한 값일수록 더 믿고, 부정확한 값은 조금만 반영해서 부드럽게 이어줌 */
+const GPS={lat:null,lng:null,v:-1,t:0,rejects:0,lastGood:0};
+const WALK_MS=3;            // 걷는 속도 가정 (m/s)
+function gpsFilter(p){
+  const lat=p.coords.latitude,lng=p.coords.longitude,acc=Math.max(p.coords.accuracy,3),t=p.timestamp||Date.now();
+  if(GPS.v<0){Object.assign(GPS,{lat,lng,v:acc*acc,t,lastGood:t});return{lat,lng,acc}}
+  const dt=Math.max((t-GPS.t)/1000,0.1);
+  const jump=haversine({lat:GPS.lat,lng:GPS.lng},{lat,lng});
+  const curAcc=Math.sqrt(GPS.v);
+  const badAcc=acc>60&&curAcc<=60&&t-GPS.lastGood<20000;
+  const teleport=jump>Math.max(25,acc)&&jump/dt>7;
+  if((badAcc||teleport)&&GPS.rejects<2){GPS.rejects++;return null}
+  GPS.rejects=0;if(acc<=60)GPS.lastGood=t;
+  GPS.v+=dt*WALK_MS*WALK_MS;                         // 시간이 지날수록 불확실성 증가
+  const k=GPS.v/(GPS.v+acc*acc);                     // 새 값을 얼마나 믿을지
+  GPS.lat+=k*(lat-GPS.lat);GPS.lng+=k*(lng-GPS.lng);GPS.v=(1-k)*GPS.v;GPS.t=t;
+  return{lat:GPS.lat,lng:GPS.lng,acc:Math.round(Math.sqrt(GPS.v)*10)/10,raw:acc};
+}
 function startGPS(){
   if(!("geolocation" in navigator)){$("gps").textContent="이 브라우저는 위치 기능을 지원하지 않아요";return}
   if(!window.isSecureContext){$("gps").textContent="https 주소에서 열어야 위치를 쓸 수 있어요";return}
   navigator.geolocation.watchPosition(p=>{
-    me={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};const ll=[me.lat,me.lng];
+    const f=gpsFilter(p);if(!f)return;               // 튀는 값은 버림
+    me=f;const ll=[me.lat,me.lng];
     if(!meMarker){meMarker=L.marker(ll,{icon:L.divIcon({className:"",iconSize:[18,18],html:'<div class="me-dot"></div>'}),zIndexOffset:1000}).addTo(map);
       meCircle=L.circle(ll,{radius:me.acc,color:"#2563eb",weight:1,fillOpacity:.08}).addTo(map);map.setView(ll,17)}
     else{meMarker.setLatLng(ll);meCircle.setLatLng(ll).setRadius(me.acc);if(follow)map.panTo(ll)}
-    $("gps").textContent=`실시간 위치 · 오차 약 ${Math.round(me.acc)}m`;$("locate").classList.toggle("on",follow);
+    $("gps").textContent=`실시간 위치 · 오차 약 ${Math.round(me.acc)}m${me.raw>30?" · 신호 약함":""}`;$("locate").classList.toggle("on",follow);
     if(picking&&picking.useGps){picking.lat=me.lat;picking.lng=me.lng;picking.locMsg=`GPS 현재 위치 (오차 ${Math.round(me.acc)}m)`;pickMarker&&pickMarker.setLatLng(ll);const e=$("locst");if(e)e.textContent=locText()}
     if(route)onMoveRoute();
   },err=>{$("gps").textContent=err.code===1?"위치 권한이 꺼져 있어요 · 브라우저 설정에서 허용해주세요":"위치를 잡지 못했어요 · 실외에서 다시 시도해보세요"},
-  {enableHighAccuracy:true,maximumAge:3000,timeout:15000});
+  {enableHighAccuracy:true,maximumAge:0,timeout:20000});
 }
 $("locate").onclick=()=>{follow=true;$("locate").classList.add("on");if(me)map.setView([me.lat,me.lng],18);else toast("아직 위치를 못 잡았어요")};
 
@@ -337,6 +378,7 @@ async function fetchWalk(a,b){
   catch(e){clearTimeout(t);const d=haversine(a,b);return{coords:[[a.lat,a.lng],[b.lat,b.lng]],dist:d,min:Math.max(1,Math.round(d/75)),real:false}}
 }
 async function startRoute(target){
+  if(!route||route.target!==target)guideOpen=target.type==="aed"||target.type==="ext";
   if(!me){toast("내 위치를 잡아야 길찾기를 할 수 있어요");return}
   toast("도보 경로를 찾는 중…");
   const r=await fetchWalk(me,target);
@@ -350,6 +392,57 @@ async function startRoute(target){
   follow=false;map.fitBounds(L.latLngBounds(r.coords),{padding:[70,70],maxZoom:18});
   showRouteSheet();
 }
+/* ---------- 사용법 안내 (AED · 소화기) ---------- */
+const DEMO_CALL=true;   // true: 119 버튼을 눌러도 전화 안 걸림(시연용) · 실제 운영 시 false
+const GUIDE={
+  aed:{title:"AED 사용법",before:"AED가 오는 동안: 어깨를 두드려 반응을 확인하고, 반응이 없으면 119에 신고한 뒤 가슴 중앙을 5cm 깊이로 1분에 100~120번 세게 눌러주세요.",
+    steps:[["전원 켜기","뚜껑을 열거나 전원 버튼을 누르면 음성 안내가 시작돼요. 안내를 그대로 따라 하면 돼요."],
+      ["패드 붙이기","환자의 윗옷을 벗기고 패드 하나는 오른쪽 쇄골 바로 아래, 다른 하나는 왼쪽 젖꼭지 아래 옆구리에 붙여요. 패드 그림을 보면 위치가 나와 있어요."],
+      ["모두 떨어지기","'분석 중'이라는 안내가 나오면 환자에게서 손을 떼고, 주변 사람도 닿지 않게 해요."],
+      ["쇼크 버튼 누르기","'쇼크가 필요합니다'라고 하면 아무도 닿지 않았는지 확인하고 깜빡이는 버튼을 눌러요. 필요 없다고 하면 바로 다음 단계로 가요."],
+      ["가슴압박 다시 시작","쇼크 직후 바로 가슴압박을 다시 해요. AED가 2분마다 다시 분석하니 119가 올 때까지 안내에 따라 반복해요."]],
+    video:"AED 사용법 질병관리청"},
+  ext:{title:"소화기 사용법",before:"먼저 '불이야!'라고 크게 외치고 119에 신고하세요. 불이 천장까지 번졌거나 연기가 많으면 끄려 하지 말고 바로 대피하세요.",
+    steps:[["안전핀 뽑기","소화기를 불 가까이 옮긴 뒤, 손잡이를 누르지 않은 상태에서 노란 안전핀을 뽑아요."],
+      ["호스를 불 쪽으로","바람을 등지고 서서 호스 끝을 불이 타는 물체 쪽으로 향하게 잡아요."],
+      ["손잡이 꽉 쥐기","손잡이를 힘껏 움켜쥐면 소화약제가 나와요."],
+      ["빗자루 쓸듯 뿌리기","불꽃이 아니라 불이 붙은 물체의 아래쪽을 향해 빗자루로 쓸듯 좌우로 골고루 뿌려요. 꺼진 뒤에도 다시 붙는지 확인해요."]],
+    video:"소화기 사용법 소방청"}
+};
+let guideOpen=false;
+function guideHTML(type){
+  const g=GUIDE[type];if(!g)return"";
+  return `<div class="guide">
+    <button class="gtoggle" id="gToggle" aria-expanded="${guideOpen}">📖 ${g.title} <span>${guideOpen?"접기 ▲":"펼치기 ▼"}</span></button>
+    <div class="gbody" ${guideOpen?"":"hidden"}>
+      <p class="gbefore">${g.before}</p>
+      <ol class="gsteps">${g.steps.map(([h,d])=>`<li><b>${h}</b><span>${d}</span></li>`).join("")}</ol>
+      <div class="gacts">
+        <button class="btn btn-pri btn-sm" id="gSpeak">🔊 음성으로 듣기</button>
+        <a class="btn btn-ghost btn-sm" href="https://www.youtube.com/results?search_query=${encodeURIComponent(g.video)}" target="_blank" rel="noopener">▶ 영상 보기</a>
+        <button class="btn btn-sos btn-sm" id="g119" style="flex:.7">📞 119</button>
+      </div>
+      <p class="note">공공기관 교육 자료를 바탕으로 정리한 요약이에요. 실제 상황에서는 기기의 음성 안내와 119 상황요원의 지시를 우선 따라주세요.</p>
+    </div></div>`;
+}
+function bindGuide(type,rerender){
+  const tg=$("gToggle");if(!tg)return;
+  tg.onclick=()=>{guideOpen=!guideOpen;rerender()};
+  const c=$("g119");if(c)c.onclick=()=>{
+    if(DEMO_CALL)toast("시연 모드예요. 실제 서비스에서는 여기서 119로 바로 연결돼요");
+    else location.href="tel:119";
+  };
+  const sp=$("gSpeak");if(!sp)return;
+  if(!("speechSynthesis" in window)){sp.hidden=true;return}
+  sp.textContent=speechSynthesis.speaking?"⏹ 음성 멈추기":"🔊 음성으로 듣기";
+  sp.onclick=()=>{
+    if(speechSynthesis.speaking){speechSynthesis.cancel();sp.textContent="🔊 음성으로 듣기";return}
+    const g=GUIDE[type];const text=[g.before].concat(g.steps.map(([h,d],i)=>`${i+1}단계, ${h}. ${d}`)).join(" ");
+    const u=new SpeechSynthesisUtterance(text);u.lang="ko-KR";u.rate=1;u.onend=()=>{const b=$("gSpeak");if(b)b.textContent="🔊 음성으로 듣기"};
+    speechSynthesis.cancel();speechSynthesis.speak(u);sp.textContent="⏹ 음성 멈추기";
+  };
+}
+
 function showRouteSheet(){
   const r=route,t=r.target,s=$("sheet");s.dataset.view="route";
   const left=haversine(me,t);
@@ -357,12 +450,14 @@ function showRouteSheet(){
    <div class="meta"><span class="tag" style="background:${t.type?TYPES[t.type].color:"var(--accent)"}">${t.type?TYPES[t.type].name:"건물"}</span><span>${r.real?"도보 경로":"직선 경로 (경로 서버 응답 없음)"}</span></div>
    <h2 style="margin-top:6px">${esc(t.building)}${t.floor?` <span style="font:500 15px var(--f-mono);color:var(--muted)">${esc(t.floor)}</span>`:""}</h2>
    ${t.memo?`<p style="margin:2px 0 0">${esc(t.memo)}</p>`:""}
+   ${guideHTML(t.type)}
    <div class="stats"><div><b>${r.dist}m</b><span>경로 거리</span></div><div><b>${r.min}분</b><span>도보 예상</span></div><div><b id="left">${left}m</b><span>남은 직선거리</span></div></div>
    ${t.floor&&t.floor!=="1F"?`<p class="note" style="margin-top:10px">건물 도착 후 ${esc(t.floor)}(으)로 이동하세요.${S.facilities.some(f=>f.building===t.building&&f.type==="elev")?" 이 건물에는 엘리베이터가 있어요.":""}</p>`:""}
    <div class="row"><button class="btn btn-ghost btn-sm" id="reroute">↻ 다시 찾기</button><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${encodeURIComponent(t.building)},${t.lat},${t.lng}">카카오맵</a><button class="btn btn-pri btn-sm" id="endRoute">안내 종료</button></div>`;
   s.hidden=false;$("fab").hidden=true;
   $("reroute").onclick=()=>startRoute(t);
-  $("endRoute").onclick=()=>{endRoute();closeSheet()};
+  $("endRoute").onclick=()=>{endRoute();if("speechSynthesis" in window)speechSynthesis.cancel();closeSheet()};
+  bindGuide(t.type,showRouteSheet);
 }
 function onMoveRoute(){
   const e=$("left");if(e)e.textContent=haversine(me,route.target)+"m";
