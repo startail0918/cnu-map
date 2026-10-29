@@ -112,6 +112,7 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 .frow .d b{display:block;font-size:14px}
 .frow .d span{font-size:12px;color:var(--muted)}
 .badge{min-width:18px;height:18px;border-radius:9px;background:var(--aed);color:#fff;font:700 11px var(--f-mono);display:inline-grid;place-items:center;padding:0 5px;margin-left:4px}
+.mask{-webkit-text-security:disc}
 .demo{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5}
 </style>
 </head>
@@ -152,7 +153,7 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
    - 비워두면(null): 시연 모드. 데이터는 이 기기에만 저장, 관리자 비번은 DEMO_ADMIN_PASSWORD
    ========================================================= */
 const FIREBASE_CONFIG = null;
-const DEMO_ADMIN_PASSWORD = "cnu길을알려조";   // 시연용. 코드에 보이므로 실제 운영에는 쓰지 마세요.
+const DEMO_ADMIN_PASSWORD = "cnuroad";   // 시연용. 코드에 보이므로 실제 운영에는 쓰지 마세요.
 
 const TYPES={
   aed:{name:"AED",full:"자동심장충격기",color:"#d92b2b",glyph:"♥",size:30},
@@ -240,7 +241,7 @@ const DB={
   },
   async login(email,pw){
     if(S.mode==="firebase")return S.fb.auth.signInWithEmailAndPassword(email,pw);
-    if(pw!==DEMO_ADMIN_PASSWORD)throw new Error("pw");
+    if(String(pw).normalize("NFC").trim()!==DEMO_ADMIN_PASSWORD.normalize("NFC"))throw new Error("pw");
     S.isAdmin=true;try{sessionStorage.setItem("cnu-admin","1")}catch(e){}refresh();
   },
   async logout(){if(S.mode==="firebase")return S.fb.auth.signOut();S.isAdmin=false;try{sessionStorage.removeItem("cnu-admin")}catch(e){}refresh()},
@@ -462,11 +463,12 @@ function renderAdmin(){
     <form class="card login" id="lf">
       ${S.mode==="demo"?`<div class="demo">시연 모드예요. 비밀번호는 코드의 <b>DEMO_ADMIN_PASSWORD</b> 값이고, 데이터는 이 기기에만 저장돼요. 실제 운영은 Firebase를 연결하세요.</div>`:""}
       ${S.mode==="firebase"?'<label class="f">이메일<input id="lEmail" type="email" autocomplete="username" required></label>':""}
-      <label class="f">비밀번호<input id="lPw" type="password" autocomplete="current-password" required></label>
+      <label class="f">비밀번호<span style="display:flex;gap:6px"><input id="lPw" type="password" autocomplete="current-password" autocapitalize="off" required><button type="button" class="btn btn-ghost btn-sm" id="pwEye" aria-label="비밀번호 보기" style="flex:none">👁</button></span></label>
       <button class="btn btn-pri" id="lBtn">로그인</button>
       <p class="note" id="lErr" hidden style="color:var(--aed)"></p>
     </form>`;
     $("aClose").onclick=closeAdmin;
+    $("pwEye").onclick=()=>{const i=$("lPw");i.type=i.type==="password"?"text":"password"};
     $("lf").onsubmit=async e=>{e.preventDefault();const err=$("lErr");err.hidden=true;$("lBtn").disabled=true;
       try{await DB.login($("lEmail")?$("lEmail").value.trim():"",$("lPw").value);toast("관리자로 로그인했어요")}
       catch(x){err.textContent="이메일 또는 비밀번호가 맞지 않아요";err.hidden=false;$("lBtn").disabled=false}};
