@@ -139,6 +139,8 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 .vp{width:100%;height:100%}.vp-t{fill:var(--vp-text);font-family:var(--f-mono);font-weight:600}.vp-tm{fill:var(--vp-tm);font-family:var(--f-body)}.vp-wc{font-family:system-ui}
 .pv-mode{position:absolute;right:10px;top:10px;z-index:500;display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--sheet);font-size:12px}
 .pv-mode button{border:0;background:none;color:var(--ink);padding:6px 11px;cursor:pointer}.pv-mode button[aria-pressed=true]{background:var(--accent);color:#fff}
+.pv-pick{display:flex;gap:8px;margin-bottom:6px}.pv-pick .btn{flex:1}.pv-hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:500;background:var(--ink);color:var(--bg);font-size:12.5px;padding:7px 12px;border-radius:999px;white-space:nowrap}
+.vbtn{width:100%;border:1.5px dashed var(--accent);color:var(--accent);background:transparent;border-radius:10px;padding:10px;font:600 14px var(--f-body);cursor:pointer}.vbtn.ok{border-style:solid;background:color-mix(in srgb,var(--accent) 10%,transparent)}
 .pv-legend{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11.5px;color:var(--muted)}.pv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;vertical-align:-1px}
 .pv-foot{padding-block:8px calc(10px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--muted)}
 .pv-foot .chips2{display:flex;gap:6px;flex-wrap:wrap}
@@ -178,7 +180,7 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 <div class="pv" id="pv" hidden>
   <div class="pv-top gut"><h2 id="pvTitle">내부지도</h2><button class="btn btn-ghost btn-sm" id="pvClose">닫기 ✕</button></div>
   <div class="pv-tabs gut" id="pvTabs"></div>
-  <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column"><div id="pvMap"></div><div class="pv-mode" id="pvMode"><button data-m="vec" aria-pressed="true">도면</button><button data-m="photo" aria-pressed="false">원본 사진</button></div></div>
+  <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column"><div id="pvMap"></div><div class="pv-hint" id="pvHint" hidden>도면을 탭해서 위치를 찍어주세요</div><div class="pv-mode" id="pvMode"><button data-m="vec" aria-pressed="true">도면</button><button data-m="photo" aria-pressed="false">원본 사진</button></div></div>
   <div class="pv-foot gut" id="pvFoot"></div>
 </div>
 <div class="admin gut" id="admin" hidden></div>
@@ -596,7 +598,7 @@ function showDetail(f){
   ${f.photo?`<img class="photo" src="${f.photo}" alt="현장 사진">`:""}
   ${d!=null?`<div class="stats"><div><b>${d}m</b><span>직선거리</span></div></div>`:'<p class="note" style="margin-top:12px">위치 권한을 허용하면 길찾기를 쓸 수 있어요.</p>'}
   <div class="row"><button class="btn btn-pri" id="go">🧭 길찾기</button><button class="btn btn-ghost" id="toB">건물 층별 보기</button></div>
-  ${PLANS[f.building]?`<button class="btn btn-ghost" id="toPlan" style="width:100%;margin-top:8px">🗺 내부지도에서 ${f.px!=null?"위치 보기":"이 층 보기"}</button>`:""}
+  ${PLANS[f.building]?`<button class="btn btn-ghost" id="toPlan" style="width:100%;margin-top:8px">🗺 내부지도에서 ${hasPin(f)?"위치 보기":"이 층 보기"}</button>`:""}
   ${S.isAdmin?'<div class="row" style="margin-top:8px"><button class="btn btn-danger btn-sm" id="del">이 시설 지도에서 제외</button></div>':""}
   ${f.type==="aed"?'<p class="note" style="margin-top:12px">응급 시 먼저 119에 신고하고, AED 전원을 켜면 음성 안내를 따라 하면 돼요.</p>':""}
   <button class="btn btn-ghost btn-sm" id="close" style="width:100%;margin-top:10px">닫기</button>`;
@@ -619,7 +621,7 @@ $("sos").onclick=()=>{
 /* ---------- 제보 / 관리자 직접 추가 폼 ---------- */
 function openForm(mode){ // mode: "report" | "admin"
   endRoute();
-  picking={mode,type:"aed",photo:null,lat:null,lng:null,useGps:false,building:selB||"",floor:selF!=="all"?selF:"1F",memo:"",locMsg:"지도를 탭해 위치를 찍어주세요"};
+  picking={mode,type:"aed",photo:null,lat:null,lng:null,useGps:false,building:selB||"",floor:selF!=="all"?selF:"1F",memo:"",vx:null,vy:null,locMsg:"지도를 탭해 위치를 찍어주세요"};
   if(me)setPick(me.lat,me.lng,`GPS 현재 위치 (오차 ${Math.round(me.acc)}m)`,true);
   if(!picking.building)picking.building=me?nearestBuilding(me):"공대 5호관";
   renderForm();
@@ -644,6 +646,7 @@ function renderForm(){
    <div class="locbox"><span>📍</span><span class="st" id="locst">${esc(locText())}</span></div>
    <div class="row" style="margin-top:0"><label class="f">건물<select id="bd">${Object.keys(BUILDINGS).map(b=>`<option ${b===P.building?"selected":""}>${b}</option>`).join("")}</select></label>
    <label class="f" style="flex:.6">층<select id="fl">${(P.type==="elev"?["전층"]:[]).concat(fl).map(x=>`<option ${x===P.floor?"selected":""}>${x}</option>`).join("")}</select></label></div>
+   ${VEC[P.building]&&VEC[P.building][P.floor]?`<button type="button" class="vbtn ${P.vx!=null?"ok":""}" id="vp">${P.vx!=null?`✓ ${P.floor} 도면에 위치를 찍었어요 · 다시 찍기`:`🗺 ${P.floor} 도면에서 정확한 위치 찍기`}</button>`:""}
    <label class="f">상세 위치<input id="mm" value="${esc(P.memo)}" placeholder="예: 3층 계단 옆 벽면" maxlength="80"></label>
    <div class="row" style="margin-top:2px"><button type="button" class="btn btn-ghost" id="cx" style="flex:.5">취소</button><button class="btn btn-pri" id="sv" ${(admin||P.photo)&&P.lat?"":"disabled"}>${admin?"지도에 추가":"제보 보내기"}</button></div>
    ${admin?"":'<p class="note">사진이 있어야 관리자가 확인할 수 있어요. 사람 얼굴이 나오지 않게 찍어주세요.</p>'}
@@ -651,13 +654,16 @@ function renderForm(){
   s.hidden=false;$("fab").hidden=true;
   s.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{sync();P.type=b.dataset.t;renderForm()});
   $("bd").onchange=()=>{sync();renderForm()};
+  $("fl").onchange=()=>{sync();renderForm()};
+  if($("vp"))$("vp").onclick=()=>{sync();openPlan(P.building,P.floor,null,{pick:true})};
   $("ph").onchange=async e=>{const f=e.target.files[0];if(!f)return;sync();P.photo=await shrink(f);renderForm()};
   $("cx").onclick=closeSheet;
   $("rf").onsubmit=async e=>{e.preventDefault();sync();await saveForm()};
 }
-function sync(){if(!$("bd"))return;picking.building=$("bd").value;picking.floor=$("fl").value;picking.memo=$("mm").value.trim()}
+function sync(){if(!$("bd"))return;const b=$("bd").value,f=$("fl").value;if(b!==picking.building||f!==picking.floor){picking.vx=picking.vy=null}picking.building=b;picking.floor=f;picking.memo=$("mm").value.trim()}
 async function saveForm(){
   const P=picking,rec={type:P.type,building:P.building,floor:P.floor,memo:P.memo,lat:P.lat,lng:P.lng,photo:P.photo||null,createdAt:new Date().toISOString()};
+  if(P.vx!=null){rec.vx=P.vx;rec.vy=P.vy}
   $("sv").disabled=true;
   try{
     if(P.mode==="admin"){await DB.addFacility(rec);toast(`${TYPES[rec.type].name}을(를) 지도에 추가했어요`)}
@@ -698,7 +704,7 @@ function renderAdmin(){
       <div class="body"><div class="meta"><span class="tag" style="background:${TYPES[r.type].color}">${TYPES[r.type].name}</span><span class="tag pend">승인 대기</span></div>
       <div class="t">${esc(r.building)} ${esc(r.floor)}</div><div class="note">${esc(r.memo)||"상세 위치 없음"}</div>
       <div class="note">${new Date(r.createdAt).toLocaleString("ko-KR")}</div>
-      <div class="acts"><button class="btn btn-pri btn-sm" data-ok="${r.id}">승인</button><button class="btn btn-danger btn-sm" data-no="${r.id}">반려</button><button class="btn btn-ghost btn-sm" data-see="${r.id}">위치 보기</button></div></div></div>`).join("")
+      <div class="acts"><button class="btn btn-pri btn-sm" data-ok="${r.id}">승인</button><button class="btn btn-danger btn-sm" data-no="${r.id}">반려</button><button class="btn btn-ghost btn-sm" data-see="${r.id}">위치 보기</button>${r.vx!=null&&VEC[r.building]&&VEC[r.building][r.floor]?`<button class="btn btn-ghost btn-sm" data-vsee="${r.id}">도면 위치</button>`:""}</div></div></div>`).join("")
       :`<div class="card"><b>대기 중인 제보가 없어요</b><p class="note">일반 사용자가 '제보하기'로 보낸 시설이 여기 쌓여요. 사진과 위치를 확인하고 승인하면 지도에 바로 표시돼요.</p></div>`;
   }else{
     const list=S.facilities.slice().sort((a,b)=>a.building.localeCompare(b.building,"ko")||fNum(String(a.floor).split(/[~·]/)[0])-fNum(String(b.floor).split(/[~·]/)[0]));
@@ -721,6 +727,7 @@ function renderAdmin(){
   A.querySelectorAll("[data-no]").forEach(b=>b.onclick=async()=>{if(!confirm("이 제보를 반려(삭제)할까요?"))return;await DB.delReport(b.dataset.no);toast("반려했어요")});
   A.querySelectorAll("[data-see]").forEach(b=>b.onclick=()=>{const r=pend.find(x=>x.id===b.dataset.see);closeAdmin();follow=false;map.setView([r.lat,r.lng],19);
     const m=L.circleMarker([r.lat,r.lng],{radius:14,color:"#b7791f",weight:3,fillOpacity:.2}).addTo(map);setTimeout(()=>map.removeLayer(m),6000);toast(`${r.building} ${r.floor} 제보 위치예요`)});
+  A.querySelectorAll("[data-vsee]").forEach(b=>b.onclick=()=>{const r=pend.find(x=>x.id===b.dataset.vsee);openPlan(r.building,r.floor,null,{preview:r})});
   A.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{const f=S.facilities.find(x=>x.id===b.dataset.del);
     if(!confirm(`${f.building} ${f.floor} ${TYPES[f.type].name}을(를) 지도에서 제외할까요?`))return;await DB.delFacility(f.id);toast("제외했어요")});
   if($("addF"))$("addF").onclick=()=>{closeAdmin();openForm("admin")};
@@ -732,27 +739,34 @@ function renderAdmin(){
 let pvMap=null,pvImg=null,pvState=null;
 const planFloor=(b,f)=>PLANS[b]&&PLANS[b][f]?f:null;
 function firstPlanFloor(b,pref){if(!PLANS[b])return null;if(pref&&PLANS[b][pref])return pref;const fl=(BUILDINGS[b]||{floors:Object.keys(PLANS[b])}).floors.filter(x=>PLANS[b][x]);return fl[0]||Object.keys(PLANS[b])[0]}
-function openPlan(b,floor,hlId){
+const hasPin=f=>f.px!=null||f.vx!=null;
+function openPlan(b,floor,hlId,opt){
   floor=firstPlanFloor(b,floor);if(!floor)return;
-  pvState={b,floor,hlId};$("pv").hidden=false;
+  pvState={b,floor,hlId,...(opt||{})};$("pv").hidden=false;
   if(!pvMap){pvMap=L.map("pvMap",{crs:L.CRS.Simple,zoomControl:true,minZoom:-3,maxZoom:3,zoomSnap:0.25,attributionControl:false})}
   renderPlan();
 }
 let pvModeSel="vec";
-function pinXY(b,floor,f,useVec){ // f.px/py = 원본 사진 기준 비율
+function pinXY(b,floor,f,useVec){ // f.px/py = 원본 사진 기준 비율, f.vx/vy = 그린 도면 좌표
+  if(f.vx!=null){const V=VEC[b]&&VEC[b][floor];if(!V)return null;
+    if(useVec)return [V.h-f.vy,f.vx];
+    const c=(VEC_CROPS[b]||{})[floor];if(!c)return null;const P=PLANS[b][floor];
+    return [P.h*(1-(c[1]+f.vy/V.h*(c[3]-c[1]))),P.w*(c[0]+f.vx/V.w*(c[2]-c[0]))]}
+  if(f.px==null)return null;
   if(!useVec){const P=PLANS[b][floor];return [P.h*(1-f.py),P.w*f.px]}
   const V=VEC[b][floor],c=(VEC_CROPS[b]||{})[floor];if(!c)return null;
   const x=(f.px-c[0])/(c[2]-c[0])*V.w,y=(f.py-c[1])/(c[3]-c[1])*V.h;
   if(x<0||y<0||x>V.w||y>V.h)return null;return [V.h-y,x]}
 function renderPlan(){
-  const {b,floor,hlId}=pvState;
-  const hasVec=!!(VEC[b]&&VEC[b][floor]),useVec=hasVec&&pvModeSel==="vec";
-  $("pvMode").hidden=!hasVec;
+  const {b,floor,hlId,pick,preview}=pvState;
+  const hasVec=!!(VEC[b]&&VEC[b][floor]),useVec=hasVec&&(pick||pvModeSel==="vec");
+  $("pvMode").hidden=!hasVec||!!pick;$("pvHint").hidden=!pick;
+  pvMap.off("click");
   $("pvMode").querySelectorAll("button").forEach(x=>{x.setAttribute("aria-pressed",x.dataset.m===(useVec?"vec":"photo"));x.onclick=()=>{pvModeSel=x.dataset.m;renderPlan()}});
-  $("pvTitle").textContent=`${b} ${floor} 내부지도`;
+  $("pvTitle").textContent=pick?`${b} ${floor} · 위치 찍기`:preview?`${b} ${floor} · 제보 위치`:`${b} ${floor} 내부지도`;
   const fls=(BUILDINGS[b]?BUILDINGS[b].floors:Object.keys(PLANS[b])).filter(x=>PLANS[b][x]);
   $("pvTabs").innerHTML=fls.map(x=>{const has=S.facilities.some(f=>f.building===b&&f.type==="aed"&&onFloor(f,x)&&floorsOf(f)?.length===1);return `<button aria-pressed="${x===floor}" class="${has?"has":""}" data-f="${x}">${x}</button>`}).join("");
-  $("pvTabs").querySelectorAll("button").forEach(t=>t.onclick=()=>{pvState={b,floor:t.dataset.f,hlId:null};renderPlan()});
+  $("pvTabs").querySelectorAll("button").forEach(t=>t.onclick=()=>{pvState={b,floor:t.dataset.f,hlId:null,pick,preview:null};if(pick)pvState.tmp=null;renderPlan()});
   pvMap.eachLayer(l=>pvMap.removeLayer(l));
   let W,H;
   if(useVec){const V=VEC[b][floor];W=V.w;H=V.h;
@@ -763,15 +777,31 @@ function renderPlan(){
   pvMap.setMaxBounds(L.latLngBounds(bounds).pad(0.25));
   const here=S.facilities.filter(f=>f.building===b&&onFloor(f,floor));
   const pins=[];
-  here.filter(f=>f.px!=null&&floorsOf(f)?.length===1).forEach(f=>{
+  here.filter(f=>hasPin(f)&&floorsOf(f)?.length===1).forEach(f=>{
     const ll=pinXY(b,floor,f,useVec);if(!ll)return;pins.push(f.id);
     const t=TYPES[f.type];
     L.marker(ll,{icon:L.divIcon({className:"",iconSize:[30,30],iconAnchor:[15,15],
       html:`<div class="pv-pin ${f.id===hlId?"hl":""}"><span class="ring"></span><span class="dot" style="background:${t.color}">${t.glyph}</span></div>`})})
-     .on("click",()=>{closePlan();showDetail(f)}).addTo(pvMap);
+     .on("click",()=>{if(pick)return;closePlan();showDetail(f)}).addTo(pvMap);
   });
+  const dropPin=(ll,cls)=>L.marker(ll,{interactive:false,zIndexOffset:1000,icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,26],html:`<div class="pick" style="${cls||""}"></div>`})}).addTo(pvMap);
+  if(preview&&preview.floor===floor){const ll=pinXY(b,floor,preview,useVec);if(ll){dropPin(ll,"background:#b7791f");setTimeout(()=>pvMap.setView(ll,Math.min(pvMap.getZoom()+1,2)),60)}}
+  if(pick){
+    let tmp=pvState.tmp||(picking&&picking.building===b&&picking.floor===floor&&picking.vx!=null?{vx:picking.vx,vy:picking.vy}:null),mk=null;
+    const put=()=>{if(mk)pvMap.removeLayer(mk);if(tmp)mk=dropPin([H-tmp.vy,tmp.vx]);pvState.tmp=tmp;drawFoot()};
+    pvMap.on("click",e=>{const x=e.latlng.lng,y=H-e.latlng.lat;if(x<0||y<0||x>W||y>H)return;tmp={vx:Math.round(x),vy:Math.round(y)};put()});
+    const drawFoot=()=>{$("pvFoot").innerHTML=`<div class="pv-pick"><button class="btn btn-ghost" id="pkCx">취소</button><button class="btn btn-pri" id="pkOk" ${tmp?"":"disabled"}>이 위치로 정하기</button></div>
+      <div>${tmp?"핀을 옮기려면 다른 곳을 탭하세요.":"시설이 있는 자리를 도면에서 탭하세요. 두 손가락으로 확대할 수 있어요."} 지금 층: <b>${floor}</b></div>`;
+      $("pkCx").onclick=closePlan;
+      $("pkOk").onclick=()=>{picking.floor=floor;picking.vx=tmp.vx;picking.vy=tmp.vy;
+        const t=(VEC[b][floor].rooms||[]).find(r=>{const xs=r.p.map(q=>q[0]),ys=r.p.map(q=>q[1]);return r.n&&tmp.vx>=Math.min(...xs)&&tmp.vx<=Math.max(...xs)&&tmp.vy>=Math.min(...ys)&&tmp.vy<=Math.max(...ys)});
+        if(t&&!picking.memo&&!/^[남여]$/.test(t.n))picking.memo=`${floor} ${t.n} 근처`;
+        closePlan();renderForm();toast("도면 위치를 저장했어요")}};
+    put();
+  }
   setTimeout(()=>{pvMap.invalidateSize();pvMap.setMinZoom(-5);pvMap.fitBounds(bounds,{padding:[8,8]});pvMap.setMinZoom(pvMap.getZoom()-0.5);
-    const hl=hlId&&S.facilities.find(f=>f.id===hlId);const ll=hl&&hl.px!=null&&pinXY(b,floor,hl,useVec);if(ll)pvMap.setView(ll,Math.min(pvMap.getZoom()+1.25,2))},30);
+    const hl=hlId&&S.facilities.find(f=>f.id===hlId);const ll=hl&&hasPin(hl)&&pinXY(b,floor,hl,useVec);if(ll)pvMap.setView(ll,Math.min(pvMap.getZoom()+1.25,2))},30);
+  if(pick)return;
   const aedText=here.filter(f=>f.type==="aed"&&!pins.includes(f.id)).map(f=>`<span>♥ AED · ${esc(f.memo)}</span>`).join("");
   const legend=useVec?`<div class="pv-legend"><span><i style="background:#e8771a"></i>소화기</span><span><i style="background:#d92b2b"></i>소화전</span><span><i style="background:#3b6fd8"></i>비상벨·완강기</span><span><i style="background:#16a34a;border-radius:2px"></i>비상구</span><span><i style="background:#4b5b8c;border-radius:2px"></i>엘리베이터</span><span>🚹🚺 화장실</span></div>`:"";
   $("pvFoot").innerHTML=`${aedText?`<div class="chips2">${aedText}</div>`:""}${legend}
