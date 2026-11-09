@@ -83,10 +83,11 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 .blabel{background:var(--accent);color:#fff;font:700 12px var(--f-body);padding:4px 8px;border-radius:8px;white-space:nowrap;transform:translate(-50%,-140%);display:inline-block}
 /* 건물 층별 목록 */
 .floors{margin-top:12px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.fl{display:grid;grid-template-columns:48px 1fr;border-top:1px solid var(--line)}
+.fl{display:grid;grid-template-columns:56px 1fr;border-top:1px solid var(--line)}
 .fl:first-child{border-top:0}
 .fl.hl{background:color-mix(in srgb,var(--accent) 10%,transparent)}
-.fl .no{font:500 13px var(--f-mono);padding:10px 0;text-align:center;background:var(--paper);border-right:1px solid var(--line);display:grid;place-items:center}
+.fl .no{font:500 13px var(--f-mono);padding:8px 0;text-align:center;background:var(--paper);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.fl .no .planbtn{margin:0}
 .fl .items{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;min-width:0}
 .fl .empty{color:var(--muted);font-size:12px;padding:3px 0}
 .it{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--sheet);color:var(--ink);border-radius:999px;padding:4px 9px 4px 5px;font-size:12.5px;cursor:pointer;max-width:100%}
@@ -124,6 +125,24 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
 .gsteps b{font-size:14px}
 .gsteps span{color:var(--muted)}
 .gacts{display:flex;gap:6px;flex-wrap:wrap}.gacts>*{flex:1;min-width:0}
+.pv{position:fixed;inset:0;z-index:1400;background:var(--bg);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+.pv-top{display:flex;align-items:center;gap:8px;padding-block:10px 6px}
+.pv-top h2{flex:1;min-width:0;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-tabs{display:flex;gap:6px;overflow-x:auto;padding-block:2px 8px;scrollbar-width:none}
+.pv-tabs button{flex:none;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:6px 12px;font:500 13px var(--f-mono);cursor:pointer}
+.pv-tabs button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.pv-tabs button.has{position:relative}
+.pv-tabs button.has::after{content:"";position:absolute;top:3px;right:4px;width:6px;height:6px;border-radius:50%;background:var(--aed)}
+#pvMap{flex:1;min-height:0;background:#e9ece8}
+.pv-foot{padding-block:8px calc(10px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--muted)}
+.pv-foot .chips2{display:flex;gap:6px;flex-wrap:wrap}
+.pv-foot .chips2 span{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:3px 9px;color:var(--ink)}
+.pv-pin{position:relative;width:30px;height:30px}
+.pv-pin .dot{position:absolute;inset:0;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px var(--f-body);border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45)}
+.pv-pin.hl .ring{position:absolute;inset:-12px;border-radius:50%;border:3px solid #d92b2b;animation:pvp 1.4s ease-out infinite}
+@keyframes pvp{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.3);opacity:0}}
+@media (prefers-reduced-motion:reduce){.pv-pin.hl .ring{animation:none}}
+.planbtn{border:1px solid var(--accent);color:var(--accent);background:transparent;border-radius:6px;font:600 11px var(--f-body);padding:1px 6px;margin-left:4px;cursor:pointer}
 .demo{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5}
 </style>
 </head>
@@ -150,6 +169,12 @@ input,select{font:400 16px var(--f-body);padding:10px 11px;border-radius:10px;bo
     <div class="sheet gut" id="sheet" hidden></div>
   </div>
 </div>
+<div class="pv" id="pv" hidden>
+  <div class="pv-top gut"><h2 id="pvTitle">내부지도</h2><button class="btn btn-ghost btn-sm" id="pvClose">닫기 ✕</button></div>
+  <div class="pv-tabs gut" id="pvTabs"></div>
+  <div id="pvMap"></div>
+  <div class="pv-foot gut" id="pvFoot"></div>
+</div>
 <div class="admin gut" id="admin" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -173,40 +198,99 @@ const TYPES={
   water:{name:"정수기",full:"정수기",color:"#1f8fbf",glyph:"W",size:24}
 };
 const FLOORS=["B2","B1","1F","2F","3F","4F","5F","6F","7F","8F"];
-// ⚠ 건물·시설 좌표는 예시값입니다. 현장 확인 후 수정하세요.
+// 건물 좌표: OpenStreetMap 건물 중심점 (2026-11 조회)
 const BUILDINGS={
-  "대학본부":{lat:36.3665,lng:127.3449,floors:["1F","2F","3F","4F","5F","6F"]},
-  "중앙도서관":{lat:36.3687,lng:127.3463,floors:["B1","1F","2F","3F","4F","5F"]},
-  "제1학생회관":{lat:36.3684,lng:127.3428,floors:["1F","2F","3F"]},
-  "제2학생회관":{lat:36.3735,lng:127.3430,floors:["1F","2F","3F"]},
-  "인문대학":{lat:36.3693,lng:127.3416,floors:["1F","2F","3F","4F","5F"]},
-  "사회과학대학":{lat:36.3676,lng:127.3438,floors:["1F","2F","3F","4F","5F"]},
-  "경상대학":{lat:36.3676,lng:127.3466,floors:["1F","2F","3F","4F","5F"]},
-  "자연과학대학":{lat:36.3700,lng:127.3412,floors:["1F","2F","3F","4F","5F"]},
-  "공대 1호관":{lat:36.3703,lng:127.3436,floors:["1F","2F","3F","4F"]},
-  "공대 2호관":{lat:36.3703,lng:127.3456,floors:["1F","2F","3F","4F","5F"]},
-  "공대 3호관":{lat:36.3698,lng:127.3474,floors:["1F","2F","3F","4F"]},
-  "공대 4호관":{lat:36.3720,lng:127.3466,floors:["1F","2F","3F","4F","5F"]},
-  "공대 5호관":{lat:36.3712,lng:127.3443,floors:["B1","1F","2F","3F","4F","5F","6F"]},
-  "정심화국제문화회관":{lat:36.3722,lng:127.3412,floors:["1F","2F"]},
-  "체육관":{lat:36.3660,lng:127.3478,floors:["1F","2F"]},
-  "학생생활관":{lat:36.3745,lng:127.3460,floors:["1F","2F","3F","4F","5F","6F"]}
+  "대학본부":{lat:36.36885,lng:127.34689,floors:["1F", "2F", "3F", "4F", "5F", "6F"]},
+  "대학본부 별관(E7-1)":{lat:36.36820,lng:127.34685,floors:["1F", "2F", "3F", "4F"]},
+  "중앙도서관":{lat:36.37021,lng:127.34604,floors:["B1","1F","2F","3F","4F","5F"]},
+  "제1학생회관":{lat:36.36787,lng:127.34318,floors:["1F", "2F", "3F"]},
+  "제2학생회관":{lat:36.36596,lng:127.34580,floors:["1F", "2F", "3F"]},
+  "제3학생회관":{lat:36.37148,lng:127.34482,floors:["1F", "2F", "3F"]},
+  "인문대학":{lat:36.36829,lng:127.34220,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "사회과학대학 본관동":{lat:36.36638,lng:127.34226,floors:["1F", "2F", "3F", "4F"]},
+  "사회과학대학 강의동":{lat:36.36672,lng:127.34224,floors:["1F", "2F", "3F", "4F"]},
+  "경상대학":{lat:36.36746,lng:127.34651,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "사범대학":{lat:36.36860,lng:127.34041,floors:["1F", "2F", "3F", "4F", "5F", "6F", "7F", "8F"]},
+  "자연과학대학 1호관":{lat:36.36946,lng:127.34363,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "자연과학대학 3호관":{lat:36.36607,lng:127.34008,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "자연과학대학 4호관":{lat:36.36688,lng:127.34012,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "공대 1호관":{lat:36.36762,lng:127.34463,floors:["1F", "2F", "3F", "4F"]},
+  "공대 2호관":{lat:36.36438,lng:127.34631,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "공대 3호관":{lat:36.36525,lng:127.34643,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "공대 4호관":{lat:36.36513,lng:127.34760,floors:["1F", "2F", "3F", "4F", "5F", "6F", "7F", "8F", "9F"]},
+  "공대 5호관":{lat:36.36646,lng:127.34434,floors:["1F", "2F", "3F", "4F", "5F", "6F"]},
+  "산학연교육연구관":{lat:36.36565,lng:127.34469,floors:["1F", "2F", "3F", "4F", "5F", "6F", "7F", "8F", "9F"]},
+  "백마교양교육관":{lat:36.36792,lng:127.34065,floors:["1F", "2F", "3F", "4F", "5F"]},
+  "정심화국제문화회관":{lat:36.36330,lng:127.34620,floors:["1F","2F"]},
+  "실내체육관":{lat:36.37160,lng:127.34174,floors:["1F","2F"]},
+  "학생생활관":{lat:36.37300,lng:127.34690,floors:["1F", "2F", "3F", "4F", "5F", "6F"]}
 };
+// 내부지도: 현장 피난안내도·층별 안내판 사진 (2026-11 팀원 촬영)
+const PLANS={"사범대학":{"8F":{"src":"fp_sabeom_8F.jpg","w":1600,"h":1200},"7F":{"src":"fp_sabeom_7F.jpg","w":1600,"h":1200},"6F":{"src":"fp_sabeom_6F.jpg","w":1600,"h":1200},"5F":{"src":"fp_sabeom_5F.jpg","w":1200,"h":1600},"4F":{"src":"fp_sabeom_4F.jpg","w":1200,"h":1600},"3F":{"src":"fp_sabeom_3F.jpg","w":1200,"h":1600},"2F":{"src":"fp_sabeom_2F.jpg","w":1200,"h":1600},"1F":{"src":"fp_sabeom_1F.jpg","w":1200,"h":1600}},"자연과학대학 3호관":{"5F":{"src":"fp_nat3_5F.jpg","w":1600,"h":1200},"4F":{"src":"fp_nat3_4F.jpg","w":1600,"h":1200},"3F":{"src":"fp_nat3_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_nat3_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_nat3_1F.jpg","w":1600,"h":1200}},"자연과학대학 4호관":{"5F":{"src":"fp_nat4_5F.jpg","w":1600,"h":1200},"4F":{"src":"fp_nat4_4F.jpg","w":1600,"h":1200},"3F":{"src":"fp_nat4_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_nat4_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_nat4_1F.jpg","w":1600,"h":1200}},"산학연교육연구관":{"9F":{"src":"fp_sanhak_9F.jpg","w":721,"h":899},"8F":{"src":"fp_sanhak_8F.jpg","w":966,"h":1278},"7F":{"src":"fp_sanhak_7F.jpg","w":889,"h":1274},"6F":{"src":"fp_sanhak_6F.jpg","w":812,"h":1151},"5F":{"src":"fp_sanhak_5F.jpg","w":966,"h":1307},"4F":{"src":"fp_sanhak_4F.jpg","w":1378,"h":893},"3F":{"src":"fp_sanhak_3F.jpg","w":1494,"h":988},"2F":{"src":"fp_sanhak_2F.jpg","w":1340,"h":906}},"제2학생회관":{"3F":{"src":"fp_su2_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_su2_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_su2_1F.jpg","w":1600,"h":1200}},"사회과학대학 본관동":{"4F":{"src":"fp_socmain_4F.jpg","w":1600,"h":1200},"3F":{"src":"fp_socmain_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_socmain_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_socmain_1F.jpg","w":1600,"h":1200}},"공대 2호관":{"4F":{"src":"fp_eng2_4F.jpg","w":1600,"h":1200},"3F":{"src":"fp_eng2_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_eng2_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_eng2_1F.jpg","w":1600,"h":1200}},"인문대학":{"5F":{"src":"fp_hum_5F.jpg","w":1600,"h":1200},"4F":{"src":"fp_hum_4F.jpg","w":1600,"h":1200},"3F":{"src":"fp_hum_3F.jpg","w":1600,"h":1200},"2F":{"src":"fp_hum_2F.jpg","w":1600,"h":1200},"1F":{"src":"fp_hum_1F.jpg","w":1600,"h":1200}},"공대 1호관":{"4F":{"src":"fp_eng1_4F.jpg","w":900,"h":1600},"3F":{"src":"fp_eng1_3F.jpg","w":900,"h":1600},"2F":{"src":"fp_eng1_2F.jpg","w":900,"h":1600},"1F":{"src":"fp_eng1_1F.jpg","w":900,"h":1600}},"사회과학대학 강의동":{"4F":{"src":"fp_soclec_4F.jpg","w":1600,"h":900},"3F":{"src":"fp_soclec_3F.jpg","w":1600,"h":900},"2F":{"src":"fp_soclec_2F.jpg","w":1600,"h":900},"1F":{"src":"fp_soclec_1F.jpg","w":1600,"h":900}},"공대 5호관":{"5F":{"src":"fp_eng5_5F.jpg","w":876,"h":290},"6F":{"src":"fp_eng5_6F.jpg","w":991,"h":311},"3F":{"src":"fp_eng5_3F.jpg","w":889,"h":297},"4F":{"src":"fp_eng5_4F.jpg","w":999,"h":319},"1F":{"src":"fp_eng5_1F.jpg","w":928,"h":326},"2F":{"src":"fp_eng5_2F.jpg","w":1030,"h":347}},"경상대학":{"1F":{"src":"fp_biz_1F.jpg","w":760,"h":1065},"2F":{"src":"fp_biz_2F.jpg","w":709,"h":1051},"3F":{"src":"fp_biz_3F.jpg","w":721,"h":1043},"4F":{"src":"fp_biz_4F.jpg","w":721,"h":1086},"5F":{"src":"fp_biz_5F.jpg","w":729,"h":1094}},"백마교양교육관":{"5F":{"src":"fp_baekma_5F.jpg","w":792,"h":374},"4F":{"src":"fp_baekma_4F.jpg","w":792,"h":400},"3F":{"src":"fp_baekma_3F.jpg","w":792,"h":412},"2F":{"src":"fp_baekma_2F.jpg","w":792,"h":399},"1F":{"src":"fp_baekma_1F.jpg","w":792,"h":412}}};
+// 시설 데이터: 공개 자료와 현장 사진으로 확인된 위치만 넣음
+//  [종류, 건물, 층, 상세, 출처, 도면x(0~1), 도면y(0~1), 위도, 경도]  위도·경도가 없으면 건물 중심
+const DATA_VERSION="2026-11-real-2";
+const JIT={aed:[0,0],elev:[0.00006,0.00008],ext:[-0.00006,0.00008],water:[0.00006,-0.00008]};
 const SEED=[
- ["aed","대학본부","1F","1층 중앙로비",36.3665,127.3448],["aed","중앙도서관","1F","출입구 안내데스크 옆",36.3687,127.3463],
- ["aed","제1학생회관","1F","편의점 맞은편",36.3684,127.3427],["aed","체육관","1F","주 출입구 관리실 앞",36.3660,127.3478],
- ["aed","공대 5호관","1F","엘리베이터 홀 옆",36.3712,127.3442],["aed","학생생활관","1F","행정동 경비실",36.3745,127.3459],
- ["ext","공대 5호관","1F","출입구 옆",36.37115,127.34425],["ext","공대 5호관","2F","계단실 앞",36.3713,127.3446],
- ["ext","공대 5호관","3F","501호 앞 복도",36.37125,127.3444],["ext","공대 5호관","5F","휴게실 옆",36.3712,127.34445],
- ["ext","공대 1호관","1F","출입구 오른쪽",36.3703,127.3436],["ext","중앙도서관","2F","열람실 출입문 옆",36.3689,127.3466],
- ["ext","중앙도서관","4F","계단 옆",36.36875,127.3464],["ext","인문대학","1F","화장실 앞",36.3693,127.3416],
- ["ext","대학본부","3F","복도 중앙",36.36655,127.34495],
- ["elev","공대 5호관","B1~6F","중앙 엘리베이터 2대",36.3711,127.3444],["elev","중앙도서관","B1~5F","로비 안쪽",36.3686,127.3461],
- ["elev","대학본부","1~6F","로비 오른쪽",36.3666,127.3451],["elev","인문대학","1~5F","본관 중앙",36.36935,127.34165],
- ["water","중앙도서관","1F","화장실 옆",36.3688,127.3460],["water","중앙도서관","3F","라운지",36.36885,127.34625],
- ["water","제1학생회관","1F","식당 입구",36.3683,127.3430],["water","공대 5호관","1F","휴게공간",36.3710,127.3440],
- ["water","공대 5호관","4F","엘리베이터 앞",36.37105,127.3441]
-].map((r,i)=>({id:"s"+i,type:r[0],building:r[1],floor:r[2],memo:r[3],lat:r[4],lng:r[5],sample:true}));
+ ["aed", "대학본부 별관(E7-1)", "1F", "1층 입구", "국립중앙의료원", null, null, 36.3682012, 127.3468131],
+ ["aed", "사범대학", "1F", "1층 화장실 쪽 계단 옆", "피난안내도", 0.809, 0.7],
+ ["aed", "사범대학", "4F", "4층 남쪽 복도 411호 앞", "피난안내도", 0.522, 0.817],
+ ["aed", "사범대학", "6F", "6층 603호·605호 사이 벽", "피난안내도", 0.648, 0.763],
+ ["aed", "제2학생회관", "1F", "1층 서쪽 비상구 옆 (창고 아래)", "피난안내도", 0.381, 0.515],
+ ["aed", "사회과학대학 본관동", "1F", "1층 복도가 꺾이는 곳 (여자화장실 옆)", "피난안내도", 0.455, 0.443],
+ ["aed", "사회과학대학 본관동", "2F", "2층 복도가 꺾이는 곳 둥근 공간", "피난안내도", 0.68, 0.53],
+ ["aed", "사회과학대학 본관동", "3F", "3층 복도가 꺾이는 곳 둥근 공간", "피난안내도", 0.68, 0.497],
+ ["aed", "사회과학대학 본관동", "4F", "4층 복도가 꺾이는 곳 둥근 공간", "피난안내도", 0.6525, 0.529],
+ ["aed", "사회과학대학 강의동", "1F", "1층 북쪽 비상구 옆", "피난안내도", 0.5175, 0.271],
+ ["aed", "사회과학대학 강의동", "2F", "2층 화장실 쪽 복도 모서리", "피난안내도", 0.4515, 0.553],
+ ["aed", "사회과학대학 강의동", "4F", "4층 화장실 쪽 복도 모서리", "피난안내도", 0.4285, 0.534],
+ ["aed", "경상대학", "1F", "N동 북부현관 옆", "층별 안내판"],
+ ["aed", "경상대학", "1F", "W119 당직실 앞", "층별 안내판"],
+ ["aed", "경상대학", "1F", "S122 삼락재 앞", "층별 안내판"],
+ ["aed", "경상대학", "2F", "학장실(W222) 앞", "층별 안내판"],
+ ["aed", "경상대학", "3F", "과제도서실(W328) 앞", "층별 안내판"],
+ ["aed", "백마교양교육관", "1F", "1층 층별 안내판 옆 (현장 사진으로 확인)", "현장 사진"],
+ ["aed", "산학연교육연구관", "3F", "3층 층별 안내판 맞은편 (현장 사진으로 확인)", "현장 사진"],
+ ["elev", "공대 5호관", "1~6F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.3666, 127.3446],
+ ["elev", "공대 3호관", "1~5F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.36503, 127.34646],
+ ["elev", "제1학생회관", "1~3F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.36801, 127.34298],
+ ["elev", "제2학생회관", "1~3F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.36617, 127.34589],
+ ["elev", "중앙도서관", "B1~5F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.37021, 127.34609],
+ ["elev", "백마교양교육관", "1~5F", "위치는 내부지도 참고", "OpenStreetMap", null, null, 36.3679, 127.34085],
+ ["elev", "사범대학", "1~8F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "자연과학대학 3호관", "1~5F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "자연과학대학 4호관", "1~5F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "산학연교육연구관", "2~9F", "위치는 내부지도 참고", "층별 안내판", null, null],
+ ["elev", "사회과학대학 본관동", "1~4F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "사회과학대학 강의동", "1~4F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "공대 2호관", "1~4F", "위치는 내부지도 참고", "피난안내도", null, null],
+ ["elev", "인문대학", "1~5F", "위치는 내부지도 참고", "층별 안내판", null, null],
+ ["elev", "경상대학", "1~5F", "위치는 내부지도 참고", "층별 안내판", null, null],
+ ["ext", "사범대학", "1F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "2F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "3F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "4F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "5F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "6F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "7F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사범대학", "8F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "제2학생회관", "1F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "제2학생회관", "2F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "제2학생회관", "3F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 본관동", "1F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 본관동", "2F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 본관동", "3F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 본관동", "4F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 강의동", "1F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 강의동", "2F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 강의동", "3F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "사회과학대학 강의동", "4F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "공대 2호관", "1F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "공대 2호관", "2F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "공대 2호관", "3F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"],
+ ["ext", "공대 2호관", "4F", "이 층 소화기 위치는 내부지도의 빨간 소화기 표시를 보세요", "피난안내도"]
+].map((r,i)=>{const B=BUILDINGS[r[1]]||{lat:36.3675,lng:127.3445};const j=JIT[r[0]]||[0,0];
+  return {id:"s"+i,type:r[0],building:r[1],floor:r[2],memo:r[3],src:r[4],px:r[5]??null,py:r[6]??null,lat:r[7]??B.lat+j[0],lng:r[8]??B.lng+j[1]}});
 
 /* ---------- 유틸 ---------- */
 const $=id=>document.getElementById(id);
@@ -244,7 +328,9 @@ const DB={
       });
     }else{
       S.mode="demo";
-      S.facilities=LS.get("cnu-fac",null)||SEED.slice();if(!localStorage.getItem("cnu-fac"))LS.set("cnu-fac",S.facilities);
+      let fac=LS.get("cnu-fac",null);
+      if(!fac||LS.get("cnu-ver","")!==DATA_VERSION){fac=SEED.slice().concat((fac||[]).filter(f=>!f.sample&&!/^s\d+$/.test(f.id)));LS.set("cnu-fac",fac);LS.set("cnu-ver",DATA_VERSION)}
+      S.facilities=fac;
       S.reports=LS.get("cnu-rep",[]);
       try{S.isAdmin=sessionStorage.getItem("cnu-admin")==="1"}catch(e){}
       refresh();
@@ -315,17 +401,20 @@ function openBuilding(name,silent){
   if(!name)return;const B=BUILDINGS[name];const list=S.facilities.filter(f=>f.building===name);
   const rows=B.floors.slice().reverse().map(fl=>{
     const items=list.filter(f=>onFloor(f,fl));
-    return `<div class="fl ${fl===selF?"hl":""}"><div class="no">${fl}</div><div class="items">${items.length?items.map(f=>`<button class="it" data-id="${f.id}"><i style="background:${TYPES[f.type].color}">${TYPES[f.type].glyph}</i><span>${TYPES[f.type].name}${f.memo?" · "+esc(f.memo):""}</span></button>`).join(""):'<span class="empty">등록된 시설 없음</span>'}</div></div>`}).join("");
+    return `<div class="fl ${fl===selF?"hl":""}"><div class="no">${fl}${planFloor(name,fl)?`<button class="planbtn" data-plan="${fl}">도면</button>`:""}</div><div class="items">${items.length?items.map(f=>`<button class="it" data-id="${f.id}"><i style="background:${TYPES[f.type].color}">${TYPES[f.type].glyph}</i><span>${TYPES[f.type].name}${f.memo?" · "+esc(f.memo):""}</span></button>`).join(""):'<span class="empty">등록된 시설 없음</span>'}</div></div>`}).join("");
   const cnt=k=>list.filter(f=>f.type===k).length;
   const s=$("sheet");s.dataset.view="building";
   s.innerHTML=`<div class="grab"></div><h2>${esc(name)}</h2>
    <div class="meta">${Object.keys(TYPES).map(k=>`<span>${TYPES[k].name} <b style="font-family:var(--f-mono)">${cnt(k)}</b></span>`).join("·")}</div>
+   ${PLANS[name]?`<button class="btn btn-pri" id="bPlan" style="width:100%;margin-top:12px">🗺 ${selF!=="all"&&planFloor(name,selF)?selF+" ":""}내부지도 보기</button>`:""}
    <div class="floors">${rows}</div>
-   <div class="row"><button class="btn btn-pri btn-sm" id="bRoute">🧭 이 건물까지 길찾기</button><button class="btn btn-ghost btn-sm" id="close">닫기</button></div>
+   <div class="row"><button class="btn btn-ghost btn-sm" id="bRoute">🧭 이 건물까지 길찾기</button><button class="btn btn-ghost btn-sm" id="close">닫기</button></div>
    <p class="note" style="margin-top:10px">층을 고르면 해당 층만 지도에 보여요. 엘리베이터처럼 여러 층에 걸친 시설은 각 층에 같이 표시돼요.</p>`;
   s.hidden=false;$("fab").hidden=true;
   s.querySelectorAll(".it").forEach(b=>b.onclick=()=>{const f=S.facilities.find(x=>x.id===b.dataset.id);f&&showDetail(f)});
   $("bRoute").onclick=()=>startRoute({lat:B.lat,lng:B.lng,building:name,type:null});
+  if($("bPlan"))$("bPlan").onclick=()=>openPlan(name,selF!=="all"?selF:null);
+  s.querySelectorAll("[data-plan]").forEach(b=>b.onclick=e=>{e.stopPropagation();openPlan(name,b.dataset.plan)});
   $("close").onclick=closeSheet;
 }
 
@@ -393,7 +482,6 @@ async function startRoute(target){
   showRouteSheet();
 }
 /* ---------- 사용법 안내 (AED · 소화기) ---------- */
-const DEMO_CALL=true;   // true: 119 버튼을 눌러도 전화 안 걸림(시연용) · 실제 운영 시 false
 const GUIDE={
   aed:{title:"AED 사용법",before:"AED가 오는 동안: 어깨를 두드려 반응을 확인하고, 반응이 없으면 119에 신고한 뒤 가슴 중앙을 5cm 깊이로 1분에 100~120번 세게 눌러주세요.",
     steps:[["전원 켜기","뚜껑을 열거나 전원 버튼을 누르면 음성 안내가 시작돼요. 안내를 그대로 따라 하면 돼요."],
@@ -428,10 +516,7 @@ function guideHTML(type){
 function bindGuide(type,rerender){
   const tg=$("gToggle");if(!tg)return;
   tg.onclick=()=>{guideOpen=!guideOpen;rerender()};
-  const c=$("g119");if(c)c.onclick=()=>{
-    if(DEMO_CALL)toast("시연 모드예요. 실제 서비스에서는 여기서 119로 바로 연결돼요");
-    else location.href="tel:119";
-  };
+  const c=$("g119");if(c)c.onclick=()=>toast("시연 모드예요. 실제로 119에 전화가 걸리지 않아요");
   const sp=$("gSpeak");if(!sp)return;
   if(!("speechSynthesis" in window)){sp.hidden=true;return}
   sp.textContent=speechSynthesis.speaking?"⏹ 음성 멈추기":"🔊 음성으로 듣기";
@@ -453,35 +538,40 @@ function showRouteSheet(){
    ${guideHTML(t.type)}
    <div class="stats"><div><b>${r.dist}m</b><span>경로 거리</span></div><div><b>${r.min}분</b><span>도보 예상</span></div><div><b id="left">${left}m</b><span>남은 직선거리</span></div></div>
    ${t.floor&&t.floor!=="1F"?`<p class="note" style="margin-top:10px">건물 도착 후 ${esc(t.floor)}(으)로 이동하세요.${S.facilities.some(f=>f.building===t.building&&f.type==="elev")?" 이 건물에는 엘리베이터가 있어요.":""}</p>`:""}
-   <div class="row"><button class="btn btn-ghost btn-sm" id="reroute">↻ 다시 찾기</button><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${encodeURIComponent(t.building)},${t.lat},${t.lng}">카카오맵</a><button class="btn btn-pri btn-sm" id="endRoute">안내 종료</button></div>`;
+   <div class="row"><button class="btn btn-ghost btn-sm" id="reroute">↻ 다시 찾기</button><a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${encodeURIComponent(t.building)},${t.lat},${t.lng}">카카오맵</a><button class="btn btn-pri btn-sm" id="endRoute">안내 종료</button></div>
+   ${PLANS[t.building]?`<button class="btn btn-ghost btn-sm" id="rPlan" style="width:100%;margin-top:8px">🗺 도착 후 볼 내부지도 (${esc(t.floor&&floorsOf(t)?.length===1?t.floor:"건물")})</button>`:""}`;
   s.hidden=false;$("fab").hidden=true;
   $("reroute").onclick=()=>startRoute(t);
-  $("endRoute").onclick=()=>{endRoute();if("speechSynthesis" in window)speechSynthesis.cancel();closeSheet()};
+  if($("rPlan"))$("rPlan").onclick=()=>openPlan(t.building,t.floor&&floorsOf(t)?.length===1?t.floor:null,t.id);
+  $("endRoute").onclick=finishRoute;
   bindGuide(t.type,showRouteSheet);
 }
 function onMoveRoute(){
   const e=$("left");if(e)e.textContent=haversine(me,route.target)+"m";
-  if(haversine(me,route.target)<15){toast("목적지에 도착했어요");endRoute();closeSheet();return}
+  if(haversine(me,route.target)<15){toast("목적지에 도착했어요");finishRoute();return}
   if(haversine(me,route.origin)>40&&Date.now()-route.last>20000)startRoute(route.target);
 }
 function endRoute(){route=null;if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}}
+function finishRoute(){endRoute();if("speechSynthesis" in window)speechSynthesis.cancel();closeSheet();selB="";selF="all";refresh();if(me){follow=true;$("locate").classList.add("on");map.setView([me.lat,me.lng],17)}}
 
 /* ---------- 시설 상세 ---------- */
 function showDetail(f){
   const t=TYPES[f.type],d=me?haversine(me,f):null,s=$("sheet");s.dataset.view="detail";
   s.innerHTML=`<div class="grab"></div>
-  <div class="meta"><span class="tag" style="background:${t.color}">${t.name}</span>${f.sample?'<span class="tag out">예시 데이터</span>':""}${f.approvedAt?'<span class="tag out">제보 승인</span>':""}</div>
+  <div class="meta"><span class="tag" style="background:${t.color}">${t.name}</span>${f.src?`<span class="tag out">출처: ${esc(f.src)}</span>`:""}${f.approvedAt?'<span class="tag out">제보 승인</span>':""}</div>
   <h2 style="margin-top:8px">${esc(f.building)} <span style="font:500 15px var(--f-mono);color:var(--muted)">${esc(f.floor)}</span></h2>
   <p style="margin:4px 0 0;font-size:15px">${esc(f.memo)||"설명 없음"}</p>
   ${f.photo?`<img class="photo" src="${f.photo}" alt="현장 사진">`:""}
   ${d!=null?`<div class="stats"><div><b>${d}m</b><span>직선거리</span></div></div>`:'<p class="note" style="margin-top:12px">위치 권한을 허용하면 길찾기를 쓸 수 있어요.</p>'}
   <div class="row"><button class="btn btn-pri" id="go">🧭 길찾기</button><button class="btn btn-ghost" id="toB">건물 층별 보기</button></div>
+  ${PLANS[f.building]?`<button class="btn btn-ghost" id="toPlan" style="width:100%;margin-top:8px">🗺 내부지도에서 ${f.px!=null?"위치 보기":"이 층 보기"}</button>`:""}
   ${S.isAdmin?'<div class="row" style="margin-top:8px"><button class="btn btn-danger btn-sm" id="del">이 시설 지도에서 제외</button></div>':""}
   ${f.type==="aed"?'<p class="note" style="margin-top:12px">응급 시 먼저 119에 신고하고, AED 전원을 켜면 음성 안내를 따라 하면 돼요.</p>':""}
   <button class="btn btn-ghost btn-sm" id="close" style="width:100%;margin-top:10px">닫기</button>`;
   s.hidden=false;$("fab").hidden=true;
   $("go").onclick=()=>startRoute(f);
   $("toB").onclick=()=>{selB=f.building;refresh();openBuilding(f.building)};
+  if($("toPlan"))$("toPlan").onclick=()=>openPlan(f.building,floorsOf(f)?.length===1?f.floor:(selF!=="all"?selF:null),f.id);
   $("close").onclick=closeSheet;
   if($("del"))$("del").onclick=async()=>{if(!confirm(`${f.building} ${f.floor} ${t.name}을(를) 지도에서 제외할까요?`))return;await DB.delFacility(f.id).catch(()=>toast("삭제 권한이 없어요"));closeSheet();toast("시설을 제외했어요")};
 }
@@ -581,9 +671,9 @@ function renderAdmin(){
   }else{
     const list=S.facilities.slice().sort((a,b)=>a.building.localeCompare(b.building,"ko")||fNum(String(a.floor).split(/[~·]/)[0])-fNum(String(b.floor).split(/[~·]/)[0]));
     body=`<button class="btn btn-pri" id="addF">＋ 지도에서 시설 직접 추가</button>
-      ${S.mode==="firebase"&&!S.facilities.length?'<button class="btn btn-ghost" id="seed">예시 데이터 넣기</button>':""}
+      ${S.mode==="firebase"&&!S.facilities.length?'<button class="btn btn-ghost" id="seed">공개 데이터 넣기</button>':""}
       ${list.map(f=>`<div class="frow"><span class="pin" style="width:24px;height:24px;background:${TYPES[f.type].color}">${TYPES[f.type].glyph}</span>
-        <div class="d"><b>${esc(f.building)} · ${esc(f.floor)} ${TYPES[f.type].name}</b><span>${esc(f.memo)||"-"}${f.sample?" · 예시":""}</span></div>
+        <div class="d"><b>${esc(f.building)} · ${esc(f.floor)} ${TYPES[f.type].name}</b><span>${esc(f.memo)||"-"}${f.src?" · "+esc(f.src):""}</span></div>
         <button class="btn btn-danger btn-sm" data-del="${f.id}">제외</button></div>`).join("")}`;
   }
   A.innerHTML=`<div class="top"><h2>관리자</h2><button class="btn btn-ghost btn-sm" id="aOut">로그아웃</button><button class="btn btn-ghost btn-sm" id="aClose">지도로</button></div>
@@ -602,8 +692,47 @@ function renderAdmin(){
   A.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{const f=S.facilities.find(x=>x.id===b.dataset.del);
     if(!confirm(`${f.building} ${f.floor} ${TYPES[f.type].name}을(를) 지도에서 제외할까요?`))return;await DB.delFacility(f.id);toast("제외했어요")});
   if($("addF"))$("addF").onclick=()=>{closeAdmin();openForm("admin")};
-  if($("seed"))$("seed").onclick=async()=>{await DB.loadSeed();toast("예시 데이터를 넣었어요")};
+  if($("seed"))$("seed").onclick=async()=>{await DB.loadSeed();toast("공개 데이터를 넣었어요")};
 }
+
+
+/* ---------- 내부지도 (피난안내도 사진) ---------- */
+let pvMap=null,pvImg=null,pvState=null;
+const planFloor=(b,f)=>PLANS[b]&&PLANS[b][f]?f:null;
+function firstPlanFloor(b,pref){if(!PLANS[b])return null;if(pref&&PLANS[b][pref])return pref;const fl=(BUILDINGS[b]||{floors:Object.keys(PLANS[b])}).floors.filter(x=>PLANS[b][x]);return fl[0]||Object.keys(PLANS[b])[0]}
+function openPlan(b,floor,hlId){
+  floor=firstPlanFloor(b,floor);if(!floor)return;
+  pvState={b,floor,hlId};$("pv").hidden=false;
+  if(!pvMap){pvMap=L.map("pvMap",{crs:L.CRS.Simple,zoomControl:true,minZoom:-3,maxZoom:3,zoomSnap:0.25,attributionControl:false})}
+  renderPlan();
+}
+function renderPlan(){
+  const {b,floor,hlId}=pvState,P=PLANS[b][floor];
+  $("pvTitle").textContent=`${b} ${floor} 내부지도`;
+  const fls=(BUILDINGS[b]?BUILDINGS[b].floors:Object.keys(PLANS[b])).filter(x=>PLANS[b][x]);
+  $("pvTabs").innerHTML=fls.map(x=>{const has=S.facilities.some(f=>f.building===b&&f.type==="aed"&&onFloor(f,x)&&floorsOf(f)?.length===1);return `<button aria-pressed="${x===floor}" class="${has?"has":""}" data-f="${x}">${x}</button>`}).join("");
+  $("pvTabs").querySelectorAll("button").forEach(t=>t.onclick=()=>{pvState={b,floor:t.dataset.f,hlId:null};renderPlan()});
+  pvMap.eachLayer(l=>pvMap.removeLayer(l));
+  const W=P.w,H=P.h,bounds=[[0,0],[H,W]];
+  L.imageOverlay(P.src,bounds).addTo(pvMap);
+  pvMap.setMaxBounds(L.latLngBounds(bounds).pad(0.25));
+  setTimeout(()=>{pvMap.invalidateSize();pvMap.fitBounds(bounds,{padding:[8,8]});pvMap.setMinZoom(pvMap.getZoom()-0.5);
+    const hl=hlId&&S.facilities.find(f=>f.id===hlId);if(hl&&hl.px!=null)pvMap.setView([H*(1-hl.py),W*hl.px],Math.min(pvMap.getZoom()+1.25,2))},30);
+  const here=S.facilities.filter(f=>f.building===b&&onFloor(f,floor));
+  here.filter(f=>f.px!=null&&floorsOf(f)?.length===1).forEach(f=>{
+    const t=TYPES[f.type];
+    L.marker([H*(1-f.py),W*f.px],{icon:L.divIcon({className:"",iconSize:[30,30],iconAnchor:[15,15],
+      html:`<div class="pv-pin ${f.id===hlId?"hl":""}"><span class="ring"></span><span class="dot" style="background:${t.color}">${t.glyph}</span></div>`})})
+     .on("click",()=>{closePlan();showDetail(f)}).addTo(pvMap);
+  });
+  const aedText=here.filter(f=>f.type==="aed"&&f.px==null).map(f=>`<span>♥ AED · ${esc(f.memo)}</span>`).join("");
+  const pinned=here.filter(f=>f.px!=null).length;
+  $("pvFoot").innerHTML=`${aedText?`<div class="chips2">${aedText}</div>`:""}
+    <div>${pinned?"동그란 핀이 AED 위치예요. ":""}도면 속 빨간 표시(소화기·소화전)와 비상구도 함께 확인하세요. 두 손가락으로 확대할 수 있어요.</div>
+    <div>출처: 현장 피난안내도·층별 안내판 사진 (2026년 11월 촬영). 실제와 다를 수 있어요.</div>`;
+}
+function closePlan(){$("pv").hidden=true}
+$("pvClose").onclick=closePlan;
 
 /* ---------- 시작 ---------- */
 DB.init();startGPS();
