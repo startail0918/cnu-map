@@ -465,54 +465,77 @@ function openBuilding(name,silent){
 }
 
 /* ---------- 실시간 위치 ---------- */
-/* GPS 튐 줄이기 v2
-   1) 칼만 필터: 정확한 값은 더 믿고, 부정확한 값은 조금만 반영
-   2) 걷는 속도로 갈 수 없는 거리로 튄 값은 버림. 단, 튄 값 3개가 서로 모여 있으면 진짜 이동으로 보고 그쪽으로 옮김
-   3) 오차 100m가 넘는 값은 좋은 위치가 있을 땐 버림 (실내에서 와이파이 기반 엉뚱한 값)
-   4) 가만히 있을 땐 작은 흔들림을 무시 */
-const GPS={x:null,v:0,t:0,cand:[],lastGood:0,vx:0,vy:0};
+/* GPS 보정 v3 — 실측(걷기 테스트) 반영
+   1) 튄 값 거르기: 걸어서 갈 수 없는 거리면 버림, 버린 값 3개가 모이면 진짜 이동으로 인정
+   2) 칼만 필터: 정확한 값일수록 많이 반영
+   3) 걷는 중에는 새 위치를 최소 40%는 반영(뒤처짐 방지), 계속 한쪽으로 밀리면 바로 따라잡음
+   4) 이동 방향·속도는 최근 4초 원본 위치로 계산, 아이폰이 주는 속도(speed)로 보정
+   5) 멈추면(속도 0) 예측을 바로 끄고 빠르게 그 자리로 모임 */
+const GPS={x:null,v:0,t:0,cand:[],lastGood:0,vx:0,vy:0,hist:[],push:0,moving:false,stopT:0};
 const M_LAT=111320;
 function gpsFilter(p){
   const c=p.coords,lat=c.latitude,lng=c.longitude,acc=Math.max(c.accuracy||50,4),t=p.timestamp||Date.now();
   if(!isFinite(lat)||!isFinite(lng))return null;
-  if(GPS.x===null){Object.assign(GPS,{x:{lat,lng},v:acc*acc,t,cand:[],lastGood:acc<=60?t:0,vx:0,vy:0});return{lat,lng,acc:Math.round(acc),raw:acc}}
+  if(GPS.x===null){Object.assign(GPS,{x:{lat,lng},v:acc*acc,t,cand:[],lastGood:acc<=60?t:0,vx:0,vy:0,hist:[{lat,lng,t}],push:0,moving:false});
+    return{lat,lng,acc:Math.round(acc),raw:acc,moving:false}}
   const dt=Math.min(Math.max((t-GPS.t)/1000,0.2),120);
   if(acc>100&&GPS.lastGood&&t-GPS.lastGood<60000)return null;
   const mLng=M_LAT*Math.cos(GPS.x.lat*Math.PI/180);
-  const mv=Math.hypot(GPS.vx,GPS.vy)>0.8?1:0;const px={lat:GPS.x.lat+mv*GPS.vy*dt/M_LAT,lng:GPS.x.lng+mv*GPS.vx*dt/mLng};
-  const dx=(lng-px.lng)*mLng,dy=(lat-px.lat)*M_LAT,d=Math.hypot(dx,dy);
   const spd=c.speed!=null&&c.speed>=0&&c.speed<8?c.speed:null;
+  // 원본 위치 기록(최근 6초)으로 속도 추정
+  GPS.hist.push({lat,lng,t});GPS.hist=GPS.hist.filter(h=>t-h.t<=6000);
+  const h0=GPS.hist.find(h=>t-h.t>=3000);
+  let mvx=0,mvy=0;
+  if(h0){const s=(t-h0.t)/1000;mvx=(lng-h0.lng)*mLng/s;mvy=(lat-h0.lat)*M_LAT/s}
+  let ms=Math.hypot(mvx,mvy);
+  if(spd!=null){if(spd<0.3){mvx=mvy=0;ms=0}else if(ms>0.2){mvx*=spd/ms;mvy*=spd/ms;ms=spd}}
+  // 속도값이 있으면(아이폰 등) 그걸로 걷는지 판단, 없으면 보정된 위치의 속도(천천히 갱신)로 판단
+  const moving=spd!=null?spd>=0.3:Math.hypot(GPS.vx,GPS.vy)>0.8;
+  if(GPS.moving&&!moving)GPS.stopT=t;GPS.moving=moving;
+  if(spd!=null){const a=moving?0.5:1;
+    if(moving&&ms<0.2){mvx=GPS.vx;mvy=GPS.vy}  // 방향을 아직 모르면 이전 방향 유지
+    GPS.vx+=a*((moving?mvx:0)-GPS.vx);GPS.vy+=a*((moving?mvy:0)-GPS.vy)}
+  if(Math.hypot(GPS.vx,GPS.vy)>3){const k=3/Math.hypot(GPS.vx,GPS.vy);GPS.vx*=k;GPS.vy*=k}
+  // 예측
+  const pm=moving?1:0;const px={lat:GPS.x.lat+pm*GPS.vy*dt/M_LAT,lng:GPS.x.lng+pm*GPS.vx*dt/mLng};
+  const dx=(lng-px.lng)*mLng,dy=(lat-px.lat)*M_LAT,d=Math.hypot(dx,dy);
   const vmax=Math.max(2.5,(spd||0)*1.5);
-  const allow=3*Math.sqrt(GPS.v+acc*acc)*0.6+vmax*dt;
+  const allow=1.8*Math.sqrt(GPS.v+acc*acc)+vmax*dt;
   if(d>allow){
     GPS.cand.push({lat,lng,acc,t});if(GPS.cand.length>6)GPS.cand.shift();
     const k=GPS.cand.slice(-3);
-    if(k.length===3){const mlat=k.reduce((a,q)=>a+q.lat,0)/3,mlng=k.reduce((a,q)=>a+q.lng,0)/3;
+    if(k.length===3){const mlat=k.reduce((s,q)=>s+q.lat,0)/3,mlng=k.reduce((s,q)=>s+q.lng,0)/3;
       const tight=k.every(q=>Math.hypot((q.lat-mlat)*M_LAT,(q.lng-mlng)*mLng)<Math.max(15,q.acc));
-      if(tight){const a=Math.max(...k.map(q=>q.acc));Object.assign(GPS,{x:{lat:mlat,lng:mlng},v:a*a,t,cand:[],vx:0,vy:0});if(a<=60)GPS.lastGood=t;
-        return{lat:mlat,lng:mlng,acc:Math.round(a),raw:acc}}}
+      if(tight){const last={lat:mlat,lng:mlng};const A=Math.max(...k.map(q=>q.acc));
+        Object.assign(GPS,{x:{lat:last.lat,lng:last.lng},v:A*A,t,cand:[],vx:0,vy:0,push:0});if(A<=60)GPS.lastGood=t;
+        return{lat:last.lat,lng:last.lng,acc:Math.round(A),raw:acc,moving}}}
     return null;
   }
   GPS.cand=[];
-  const q=(spd!=null?Math.max(spd,0.3):1.2);
+  // 칼만 갱신
+  const q=spd!=null?(moving?Math.max(1.5,spd*1.5):0.6):1.2;
   GPS.v+=q*q*dt;
-  const k=GPS.v/(GPS.v+acc*acc);
+  // 계속 같은 쪽으로 밀리면(뒤처짐) 불확실성을 키워서 바로 따라잡기
+  const big=d>(spd!=null?1:1.8)*Math.sqrt(GPS.v+acc*acc)&&(GPS.lx==null||dx*GPS.lx+dy*GPS.ly>0);
+  GPS.push=big?GPS.push+1:0;GPS.lx=dx;GPS.ly=dy;
+  if(GPS.push>=3)GPS.v+=d*d;
+  let k=GPS.v/(GPS.v+acc*acc);
+  const justStopped=!moving&&t-GPS.stopT<8000;
+  if(spd!=null&&(moving||justStopped))k=Math.max(k,0.4);
   const nx={lat:px.lat+k*(lat-px.lat),lng:px.lng+k*(lng-px.lng)};
-  // 속도 추정 (지수평균, 사람 속도 이내로 제한)
-  const ivx=(nx.lng-GPS.x.lng)*mLng/dt,ivy=(nx.lat-GPS.x.lat)*M_LAT/dt,a=Math.min(1,0.1*dt);
-  GPS.vx+=a*(ivx-GPS.vx);GPS.vy+=a*(ivy-GPS.vy);
-  const sp=Math.hypot(GPS.vx,GPS.vy),cap=spd!=null?Math.max(spd,0.1):3;if(sp>cap){GPS.vx*=cap/sp;GPS.vy*=cap/sp}
-  if(spd!=null&&spd<0.3){GPS.vx*=0.5;GPS.vy*=0.5}
+  if(spd==null){ // 속도값이 없을 때: 보정된 위치 변화로 속도 추정(v2 방식)
+    const ivx=(nx.lng-GPS.x.lng)*mLng/dt,ivy=(nx.lat-GPS.x.lat)*M_LAT/dt,b=Math.min(1,0.1*dt);
+    GPS.vx+=b*(ivx-GPS.vx);GPS.vy+=b*(ivy-GPS.vy)}
   GPS.x=nx;GPS.v=(1-k)*GPS.v;GPS.t=t;
   if(acc<=60)GPS.lastGood=t;
-  return{lat:GPS.x.lat,lng:GPS.x.lng,acc:Math.max(3,Math.round(Math.sqrt(GPS.v))),raw:acc};
+  return{lat:GPS.x.lat,lng:GPS.x.lng,acc:Math.max(3,Math.round(Math.sqrt(GPS.v))),raw:acc,moving};
 }
-/* 화면 표시: 새 위치로 0.6초 동안 부드럽게 이동, 1.5m 미만 움직임은 무시 */
+/* 화면 표시: 새 위치로 0.6초 동안 부드럽게 이동. 작은 움직임은 무시(걷는 중 1.5m, 서 있을 때 3m) */
 let meAnim=0;
-function moveMe(ll,acc){
+function moveMe(ll,acc,moving){
   const from=meMarker.getLatLng(),d=map.distance(from,ll);
   meCircle.setRadius(acc);
-  if(d<1.5)return;
+  if(d<(moving?1.5:3))return;
   cancelAnimationFrame(meAnim);
   if(d>80){meMarker.setLatLng(ll);meCircle.setLatLng(ll);return}
   const t0=performance.now();
@@ -529,7 +552,7 @@ function startGPS(){
     me=f;const ll=[me.lat,me.lng];
     if(!meMarker){meMarker=L.marker(ll,{icon:L.divIcon({className:"",iconSize:[18,18],html:'<div class="me-dot"></div>'}),zIndexOffset:1000}).addTo(map);
       meCircle=L.circle(ll,{radius:me.acc,color:"#2563eb",weight:1,fillOpacity:.08}).addTo(map);map.setView(ll,17)}
-    else{moveMe(ll,me.acc);if(follow&&map.distance(map.getCenter(),ll)>3)map.panTo(ll,{animate:true,duration:0.6})}
+    else{moveMe(ll,me.acc,f.moving);if(follow&&map.distance(map.getCenter(),ll)>3)map.panTo(ll,{animate:true,duration:0.6})}
     $("gps").textContent=`실시간 위치 · 오차 약 ${Math.round(me.acc)}m${me.raw>30?" · 신호 약함":""}`;$("locate").classList.toggle("on",follow);
     if(picking&&picking.useGps){picking.lat=me.lat;picking.lng=me.lng;picking.locMsg=`GPS 현재 위치 (오차 ${Math.round(me.acc)}m)`;pickMarker&&pickMarker.setLatLng(ll);const e=$("locst");if(e)e.textContent=locText()}
     if(route)onMoveRoute();
